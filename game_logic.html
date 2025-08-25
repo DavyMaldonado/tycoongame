@@ -10,27 +10,25 @@
 class TycoonScene extends Phaser.Scene {
   constructor() {
     super();
+    this.round = 1;                 // Current round
+    this.ranks = [];                 // Store rank order per round
     this.deck = [];
     this.hands = [];
     this.table = [];
     this.currentPlayer = 0;
-    this.passesInRow = 0;
     this.revolution = false;
 
     this.selectedCards = [];
     this.selectedRank = null;
+    this.passes = {};
+    this.lastSetter = null;
+    this.finishedPlayers = [];
   }
 
   preload() {}
 
   create() {
-    this.initDeck();
-    this.dealCards(4);
-
-    this.tableTexts = [];
-
-    this.statusText = this.add.text(20, 20, "Your turn!", {fontSize:"20px", color:"#fff"});
-    this.renderHand(0);
+    this.startNextRound();
 
     // Pass button
     this.passBtn = this.add.text(50, 450, "[ PASS ]", {fontSize:"28px", color:"#f44", backgroundColor:"#222", padding:{x:10,y:5}})
@@ -46,6 +44,7 @@ class TycoonScene extends Phaser.Scene {
     this.deck=[];
     for(let s of suits) for(let r=3;r<=15;r++) this.deck.push({rank:r,suit:s});
     this.deck.push({rank:16,suit:"🃏"}); // Joker
+    this.deck.push({rank:16,suit:"🃏"}); // 2 Jokers
     Phaser.Utils.Array.Shuffle(this.deck);
   }
 
@@ -56,130 +55,164 @@ class TycoonScene extends Phaser.Scene {
     this.hands.forEach(hand=>hand.sort((a,b)=>a.rank-b.rank));
   }
 
-  cardToString(card){ const ranks={11:"J",12:"Q",13:"K",14:"A",15:"2",16:"Joker"}; return (ranks[card.rank]||card.rank)+card.suit; }
+  cardToString(card){ 
+    const ranks={11:"J",12:"Q",13:"K",14:"A",15:"2",16:"Joker"}; 
+    return (ranks[card.rank]||card.rank)+card.suit; 
+  }
 
   renderHand(playerIndex) {
     if(this.handTexts) this.handTexts.forEach(t=>t.destroy());
     this.handTexts=[];
-    // Reset selectedCards if needed
     if(this.selectedCards.length === 0) this.selectedRank = null;
 
     let hand = this.hands[playerIndex];
-
-    // Determine required count from table
     let topSet = this.getTopSet();
     let requiredCount = topSet ? topSet.length : 1;
 
     hand.forEach((card, i) => {
-        let txt = this.add.text(50 + i*40, 500, this.cardToString(card), { fontSize:"24px", color:"#fff" }).setInteractive();
+      let txt = this.add.text(50 + i*40, 500, this.cardToString(card), { fontSize:"24px", color:"#fff" }).setInteractive();
 
-        // Determine if card is selectable
-        let canSelect = true;
+      let canSelect = false;
+      if (!topSet) {
+        canSelect = true;
+      } else {
+        let sameRank = hand.filter(c => c.rank === card.rank);
+        let jokers = hand.filter(c => c.rank === 16);
 
-        // If table requires a set, card count must match
-        if(topSet && hand.filter(c => c.rank === card.rank).length < requiredCount) canSelect = false;
+        if (sameRank.length + jokers.length >= requiredCount) {
+          let candidate = sameRank.slice(0, requiredCount);
+          if (candidate.length < requiredCount) {
+            candidate = candidate.concat(jokers.slice(0, requiredCount - candidate.length));
+          }
+          if (this.canPlaySet(candidate)) canSelect = true;
+        }
+      }
 
-        // If one or more cards are selected, only allow same rank
-        if(this.selectedRank && card.rank !== this.selectedRank) canSelect = false;
+      if(this.selectedRank && card.rank !== this.selectedRank && card.rank !== 16) {
+        canSelect = false;
+      }
 
-        txt.setAlpha(canSelect ? 1 : 0.3);
+      txt.setAlpha(canSelect ? 1 : 0.3);
 
-        txt.on("pointerdown", () => {
-            if(!canSelect) return;
-            this.toggleSelect(card, txt);
-        });
+      if(this.selectedCards.includes(card)) {
+        txt.setStyle({ backgroundColor: "#daa520", color:"#000" });
+        txt.y -= 10;
+      }
 
-        this.handTexts.push(txt);
+      txt.on("pointerdown", () => {
+        if(!canSelect) return;
+        this.toggleSelect(card);
+      });
+
+      this.handTexts.push(txt);
     });
-}
+  }
 
-
-  toggleSelect(card, txtObj) {
+  toggleSelect(card) {
     let idx = this.selectedCards.indexOf(card);
     if(idx >= 0) {
-        this.selectedCards.splice(idx,1);
-        txtObj.setStyle({backgroundColor:null});
-        if(this.selectedCards.length === 0) this.selectedRank = null;
+      this.selectedCards.splice(idx,1);
+      if(this.selectedCards.length === 0) this.selectedRank = null;
     } else {
-        if(this.selectedCards.length === 0) this.selectedRank = card.rank;
-        this.selectedCards.push(card);
-        txtObj.setStyle({backgroundColor:"#444"});
+      if(this.selectedCards.length === 0 && card.rank !== 16) this.selectedRank = card.rank;
+      this.selectedCards.push(card);
     }
-    // Re-render to update dimming for other cards
     this.renderHand(0);
-}
-
+  }
 
   getTopSet(){ return this.table.length>0?this.table[this.table.length-1]:null; }
 
+  getEffectiveRank(card) {
+    if (card.rank === 16) return 100; // Joker always highest
+    if (!this.revolution) return card.rank;
+    return 18 - card.rank; // Reverse order
+  }
+
   canPlaySet(cards){
     if(cards.length===0) return false;
-    if(!cards.every(c=>c.rank===cards[0].rank)) return false;
+    if(cards.length === 1 && cards[0].rank === 16) return true;
+
+    let nonJokers = cards.filter(c => c.rank !== 16);
+    if(nonJokers.length === 0) return false;
+
+    let baseRank = nonJokers[0].rank;
+    if(!nonJokers.every(c => c.rank === baseRank)) return false;
+
     let topSet=this.getTopSet();
     if(!topSet) return true;
 
-    // Must match the number of cards
     if(cards.length!==topSet.length) return false;
 
-    let top=topSet[0];
-    let rank=cards[0].rank;
+    let top = topSet[0];
+    let rank = baseRank;
+    if(top.rank===16 && rank===3 && nonJokers[0].suit==="♠") return true;
 
-    // Exception: 3♠ on Joker
-    if(top.rank===16 && rank===3 && cards[0].suit==="♠") return true;
+    let topVal = this.getEffectiveRank(top);
+    let newVal = this.getEffectiveRank({rank: rank});
 
-    if(this.revolution) return rank<top.rank;
-    return rank>top.rank;
+    return newVal > topVal;
   }
 
   playerAttemptPlay(){
     if(this.currentPlayer!==0) return;
     if(!this.canPlaySet(this.selectedCards)){ this.statusText.setText("Invalid play!"); return; }
     this.playCard(0,this.selectedCards);
-    this.selectedCards=[];
-    this.selectedRank=null;
+    this.selectedCards=[]; this.selectedRank=null;
     this.renderHand(0);
     this.nextTurn();
   }
 
   playerPass(){
     if(this.currentPlayer!==0) return;
-    this.passesInRow++;
+    this.passes[0] = true;
     this.statusText.setText("You pass!");
     this.nextTurn();
   }
 
-  playCard(playerIndex,cards){
-    this.hands[playerIndex]=this.hands[playerIndex].filter(c=>!cards.includes(c));
+  playCard(playerIndex, cards) {
+    this.hands[playerIndex] = this.hands[playerIndex].filter(c => !cards.includes(c));
     this.table.push(cards);
+    this.lastSetter = playerIndex;
+    this.passes = {};
 
-    // dynamic table layout: center each set
-    let yBase=300;
-    let spacingY=60;
-    let xCenter=500;
-
-    cards.forEach((card,i)=>{
-      let totalWidth=cards.length*40;
-      let x=xCenter - totalWidth/2 + i*40;
-      let txt=this.add.text(x, yBase + (this.table.length-1)*spacingY,this.cardToString(card),{fontSize:"28px",color:"#ff0"});
-      this.tableTexts.push(txt);
+    let yBase = 300;
+    let spacingY = 60;
+    let xCenter = 500;
+    cards.forEach((card, i) => {
+        let totalWidth = cards.length * 40;
+        let x = xCenter - totalWidth / 2 + i * 40;
+        let txt = this.add.text(x, yBase + (this.table.length - 1) * spacingY, this.cardToString(card), { fontSize: "28px", color: "#ff0" });
+        this.tableTexts.push(txt);
     });
 
-    this.passesInRow=0;
+    // Flags for special pile clears
+    let pileCleared = false;
 
-    if(cards.some(c=>c.rank===8)) this.clearPile("8-Cut!");
-
-    // Joker followed by 3♠
-    let prevSet=this.table.length>=2?this.table[this.table.length-2]:null;
-    if(prevSet && prevSet[0].rank===16 && cards[0].rank===3 && cards[0].suit==="♠"){
-      this.clearPile("3 of Spades clears Joker!");
+    // 8-cut
+    if (cards.some(c => c.rank === 8)) {
+        this.clearPile("8-Cut!");
+        pileCleared = true;
     }
 
-    // Revolution check
-    if(cards.length===4){
-      this.revolution=!this.revolution;
-      this.add.text(300,200,"REVOLUTION!",{fontSize:"32px",color:"#f0f"});
+    // 3♠ beats Joker
+    let prevSet = this.table.length >= 2 ? this.table[this.table.length - 2] : null;
+    if (prevSet && prevSet[0].rank === 16 && cards[0].rank === 3 && cards[0].suit === "♠") {
+        this.clearPile("3♠ beats Joker!");
+        pileCleared = true;
     }
-  }
+
+    if (cards.length === 4) {
+        this.revolution = !this.revolution;
+        this.add.text(300, 200, "REVOLUTION!", { fontSize: "32px", color: "#f0f" });
+    }
+
+    // Track who should start next turn
+    this.startingPlayerAfterClear = pileCleared ? playerIndex : null;
+
+    // Check if player emptied hand
+    if (this.hands[playerIndex].length === 0) this.endRound();
+}
+
 
   clearPile(message){
     this.table=[];
@@ -187,39 +220,166 @@ class TycoonScene extends Phaser.Scene {
     if(this.clearMsg) this.clearMsg.destroy();
     this.clearMsg=this.add.text(300,250,message,{fontSize:"28px",color:"#0f0"});
     this.clearMsg.setAlpha(1);
-    this.tweens.add({targets:this.clearMsg,alpha:0,duration:1500,ease:"Linear",onComplete:()=>{if(this.clearMsg){this.clearMsg.destroy(); this.clearMsg=null;}}});
-    this.passesInRow=0;
+    this.tweens.add({targets:this.clearMsg,alpha:0,duration:1500,onComplete:()=>{if(this.clearMsg){this.clearMsg.destroy(); this.clearMsg=null;}}});
+    this.passes = {};
   }
 
-  aiTurn(playerIndex){
-    let topSet=this.getTopSet();
-    let requiredCount=topSet?topSet.length:1;
-    // find all possible sets with exact required count
-    let ranks=[...new Set(this.hands[playerIndex].map(c=>c.rank))];
-    for(let r of ranks){
-      let candidates=this.hands[playerIndex].filter(c=>c.rank===r).slice(0,requiredCount);
-      if(candidates.length===requiredCount && this.canPlaySet(candidates)){
-        this.playCard(playerIndex,candidates);
-        return;
-      }
+  aiTurn(playerIndex) {
+    let topSet = this.getTopSet();
+    let requiredCount = topSet ? topSet.length : 1;
+    
+    // Get ranks of non-joker cards
+    let ranks = [...new Set(this.hands[playerIndex].filter(c => c.rank !== 16).map(c => c.rank))];
+
+    // Try non-joker cards first
+    for (let r of ranks) {
+        let sameRank = this.hands[playerIndex].filter(c => c.rank === r);
+        let jokers = this.hands[playerIndex].filter(c => c.rank === 16);
+
+        let candidate = sameRank.slice(0, requiredCount);
+        if (candidate.length < requiredCount) candidate = candidate.concat(jokers.slice(0, requiredCount - candidate.length));
+
+        if (candidate.length === requiredCount && this.canPlaySet(candidate)) {
+            this.playCard(playerIndex, candidate);
+            return;
+        }
     }
-    this.passesInRow++;
-    console.log("AI",playerIndex,"passes");
+
+    // Only play a single Joker if table is empty or top set is not a Joker
+    let singleJoker = this.hands[playerIndex].find(c => c.rank === 16);
+    if (requiredCount === 1 && singleJoker) {
+        if (!topSet || topSet[0].rank !== 16) {
+            this.playCard(playerIndex, [singleJoker]);
+            return;
+        }
+    }
+
+    // Pass if nothing else works
+    this.passes[playerIndex] = true;
   }
 
-  nextTurn(){
-    if(this.hands[0].length===0){ this.statusText.setText("You win!"); return; }
-    this.currentPlayer=(this.currentPlayer+1)%4;
 
-    if(this.currentPlayer===0){
-      this.statusText.setText("Your turn!");
-      this.renderHand(0);
+  nextTurn() {
+    // Determine active players: haven't passed and have cards
+    let active = [0,1,2,3].filter(i => !this.passes[i] && this.hands[i].length > 0);
+
+    // Check if pile should be cleared (everyone else passed)
+    if (this.table.length === 0 || (active.length === 1 && active[0] === this.lastSetter)) {
+        this.clearPile("Everyone passed");
+        this.currentPlayer = this.lastSetter;
+        
+        // If current player is human
+        if (this.currentPlayer === 0) {
+            this.statusText.setText("Your turn!");
+            this.renderHand(0);
+        } else {
+            // If current player is AI, trigger AI turn
+            this.statusText.setText("AI " + this.currentPlayer + "'s turn...");
+            this.time.delayedCall(500, () => {
+                this.aiTurn(this.currentPlayer);
+                this.nextTurn();
+            });
+        }
+        return; // Stop further rotation
+    }
+
+    // Normal turn rotation: skip empty hands
+    do {
+        this.currentPlayer = (this.currentPlayer + 1) % 4;
+    } while (this.hands[this.currentPlayer].length === 0);
+
+    // Trigger next turn
+    if (this.currentPlayer === 0) {
+        this.statusText.setText("Your turn!");
+        this.renderHand(0);
     } else {
-      this.statusText.setText("AI "+this.currentPlayer+"'s turn...");
-      this.time.delayedCall(1000,()=>{this.aiTurn(this.currentPlayer); this.nextTurn();});
+        this.statusText.setText("AI " + this.currentPlayer + "'s turn...");
+        this.time.delayedCall(500, () => {
+            this.aiTurn(this.currentPlayer);
+            this.nextTurn();
+        });
+    }
+}
+
+
+
+
+  // --- Rounds & Trading ---
+  endRound() {
+    let ranking = this.hands
+        .map((hand, idx) => ({player: idx, cardsLeft: hand.length}))
+        .sort((a,b) => a.cardsLeft - b.cardsLeft)
+        .map(x => x.player);
+
+    if(this.round > 1) ranking = this.adjustRankingForPreviousWinner(ranking);
+
+    this.ranks.push(ranking);
+    console.log("Round " + this.round + " ranking:", ranking);
+
+    if(this.round >= 3){
+      this.statusText.setText("Game Over!");
+      console.log("Final rankings:", this.ranks);
+      return;
     }
 
-    if(this.passesInRow>=3) this.clearPile("Pile Cleared");
+    this.round++;
+    this.startNextRound();
+  }
+
+  adjustRankingForPreviousWinner(ranking){
+    let prevFirst = this.ranks[this.ranks.length - 1][0];
+    if(ranking[0] !== prevFirst){
+        let idx = ranking.indexOf(prevFirst);
+        ranking.splice(idx,1);
+        ranking.push(prevFirst);
+    }
+    return ranking;
+  }
+
+  tradeCards() {
+    let lastRound = this.ranks[this.ranks.length - 1];
+    let [first, second, third, fourth] = lastRound;
+
+    let firstHand = this.hands[first];
+    let fourthHand = this.hands[fourth];
+    let fourthHigh = [...fourthHand].sort((a,b)=>b.rank-a.rank).slice(0,2);
+    fourthHigh.forEach(c => fourthHand.splice(fourthHand.indexOf(c),1));
+    let firstGive = firstHand.slice(0,2);
+    firstGive.forEach(c => firstHand.splice(firstHand.indexOf(c),1));
+    firstHand.push(...fourthHigh);
+    fourthHand.push(...firstGive);
+
+    let secondHand = this.hands[second];
+    let thirdHand = this.hands[third];
+    let secondCard = secondHand[0];
+    let thirdCard = thirdHand.sort((a,b)=>b.rank-a.rank)[0];
+    secondHand.splice(secondHand.indexOf(secondCard),1);
+    thirdHand.splice(thirdHand.indexOf(thirdCard),1);
+    secondHand.push(thirdCard);
+    thirdHand.push(secondCard);
+  }
+
+  startNextRound() {
+    this.initDeck();
+    this.dealCards(4);
+
+    if(this.round > 1) this.tradeCards();
+
+    this.table=[];
+    this.passes={};
+    this.lastSetter=null;
+    this.currentPlayer=0;
+    this.selectedCards=[];
+    this.selectedRank=null;
+    this.finishedPlayers=[];
+
+    if(this.handTexts) this.handTexts.forEach(t=>t.destroy());
+    this.handTexts=[];
+
+    this.tableTexts=[];
+    this.statusText = this.add.text(20, 20, "Round " + this.round + " - Your turn!", {fontSize:"20px", color:"#fff"});
+
+    this.renderHand(0);
   }
 }
 

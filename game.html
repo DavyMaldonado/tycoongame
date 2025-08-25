@@ -2,204 +2,295 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Tycoon UI Sandbox Cards</title>
+<title>Tycoon Card Game</title>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  background-color: #111;
-  overflow: hidden;
-}
-#game-container {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  overflow: hidden;
-}
-#game-container canvas {
-  transform-origin: top left;
-  display: block;
-  position: absolute;
-}
+html, body { margin:0; padding:0; width:100%; height:100%; background-color:#111; overflow:hidden; }
+#game-container { width:100%; height:100%; position:relative; overflow:hidden; }
+#game-container canvas { transform-origin: top left; display:block; position:absolute; }
 </style>
 </head>
 <body>
 <div id="game-container"></div>
 
 <script>
-class UISandbox extends Phaser.Scene {
+class TycoonUI extends Phaser.Scene {
   constructor() {
     super();
-    this.handCards = [];
-    this.handTexts = [];
+    this.deck = [];
+    this.hands = [];
+    this.table = [];
+    this.currentPlayer = 0;
+    this.passesInRow = 0;
+    this.revolution = false;
     this.selectedCards = [];
+    this.selectedRank = null;
+    this.handImages = [];
+    this.tableImages = [];
     this.frames = {};
+    this.orderedFrames = [];
   }
 
   preload() {
-    this.load.image('cardsheet', 'cards.png'); // your PNG path
+    this.load.image('cardsheet', 'https://davymaldonado.github.io/tycoongame/cards.png');
   }
 
   create() {
-    // Create card frames based on your layout
-    this.createCardFrames();
+    this.createFrames();
+    this.initDeck();
+    this.dealCards(4); // 54 cards
 
-    // Table background
-    this.add.rectangle(640, 360, 1000, 400, 0x2b2b2b).setOrigin(0.5,0.5);
-
-    this.tableTexts = [];
-    this.playedCards = [];
-
-    // Example hand
-    this.handCards = [
-      {rank:3,suit:"♣"}, {rank:5,suit:"♦"}, {rank:7,suit:"♥"},
-      {rank:11,suit:"♠"}, {rank:16,suit:"Joker"}, {rank:4,suit:"♣"}
-    ];
-
-    this.statusText = this.add.text(20, 20, "UI Sandbox Cards 16:9", {fontSize:"28px", color:"#fff"});
-
-    this.renderHand();
+    this.statusText = this.add.text(20, 20, "Your turn!", { fontSize: "20px", color: "#fff" });
 
     // Buttons
-    this.playBtn = this.add.text(1000, 650, "[ PLAY ]", {fontSize:"28px", color:"#4f4", backgroundColor:"#222", padding:{x:10,y:5}})
-      .setInteractive({useHandCursor:true})
-      .on('pointerover', ()=>this.playBtn.setScale(1.1))
-      .on('pointerout', ()=>this.playBtn.setScale(1))
-      .on('pointerdown', ()=>this.playCards());
+    this.passBtn = this.add.text(50, 600, "[ PASS ]", { fontSize:"28px", color:"#f44", backgroundColor:"#222", padding:{x:10,y:5}})
+      .setInteractive().on("pointerdown", ()=>this.playerPass());
+    this.playBtn = this.add.text(250, 600, "[ PLAY ]", { fontSize:"28px", color:"#4f4", backgroundColor:"#222", padding:{x:10,y:5}})
+      .setInteractive().on("pointerdown", ()=>this.playerAttemptPlay());
 
-    this.passBtn = this.add.text(1150, 650, "[ PASS ]", {fontSize:"28px", color:"#f44", backgroundColor:"#222", padding:{x:10,y:5}})
-      .setInteractive({useHandCursor:true})
-      .on('pointerover', ()=>this.passBtn.setScale(1.1))
-      .on('pointerout', ()=>this.passBtn.setScale(1))
-      .on('pointerdown', ()=>this.passTurn());
+    this.renderHand(0); // render player hand
   }
 
-  createCardFrames() {
-    const cardWidth = 72;  // adjust to your PNG card width
-    const cardHeight = 96; // adjust to your PNG card height
-    const leftMargin = 11;
-    const topGap = 3;
-    const rowGap = 22;
-
+  createFrames() {
+    const cardWidth = 147, cardHeight = 240, leftMargin = 11, topGap = 3;
+    const columnGap = 22, rowGap = 4;
     const suits = ['♣','♦','♥','♠'];
+    const ranks = [14,2,3,4,5,6,7,8,9,10,11,12];
 
-    // First 4 columns: suits
-    for(let col=0; col<4; col++){
-      for(let row=0; row<12; row++){
-        let x = leftMargin + col*(cardWidth + topGap);
-        let y = row*(cardHeight + rowGap);
-        let rank;
-        if(row===0) rank=14;       // Ace
-        else if(row===10) rank=11; // Jack
-        else if(row===11) rank=12; // Queen
-        else rank=row+1;            // 2..10
-        let suit = suits[col];
-        this.frames[`${rank}${suit}`] = {x:x, y:y, width:cardWidth, height:cardHeight};
+    for(let r=0;r<4;r++){
+      const suit = suits[r];
+      for(let c=0;c<12;c++){
+        const x = leftMargin + c*(cardWidth+columnGap);
+        const y = topGap + r*(cardHeight+rowGap);
+        const key = `${ranks[c]}${suit}`;
+        this.frames[key] = {x,y,width:cardWidth,height:cardHeight};
+        this.orderedFrames.push(key);
       }
     }
 
-    // Column 5: Jokers, back, kings
-    const specialCol = 4;
-    const specialX = leftMargin + specialCol*(cardWidth + topGap);
-    const specialCards = ['Joker','Joker','Back','K♣','K♦','K♥','K♠'];
-    for(let i=0;i<specialCards.length;i++){
-      let y = i*(cardHeight + rowGap);
-      this.frames[specialCards[i]] = {x:specialX, y:y, width:cardWidth, height:cardHeight};
-    }
+    const specialRowIndex = 4;
+    const specialCols = ['Joker','Joker','Back','K♣','K♦','K♥','K♠'];
+    specialCols.forEach((key,col)=>{
+      const x = leftMargin + col*(cardWidth+columnGap);
+      const y = topGap + specialRowIndex*(cardHeight+rowGap);
+      this.frames[key] = {x,y,width:cardWidth,height:cardHeight};
+      if(key!=='Back') this.orderedFrames.push(key);
+    });
   }
 
-  renderHand() {
-    if(this.handTexts) this.handTexts.forEach(t=>t.destroy());
-    this.handTexts=[];
+  createCardImage(frame){
+    if(!frame) return null;
+    const {x,y,width,height}=frame;
+    const key = `card_${x}_${y}`;
+    if(!this.textures.exists(key)){
+      const img=this.textures.get('cardsheet').getSourceImage();
+      const canvas=this.textures.createCanvas(key,width,height);
+      const ctx=canvas.getContext('2d');
+      ctx.drawImage(img,x,y,width,height,0,0,width,height);
+      canvas.refresh();
+    }
+    return this.add.image(0,0,key).setOrigin(0.5,0.5).setInteractive({useHandCursor:true});
+  }
 
-    let hand = this.handCards;
-    let xStart = 100;
-    let yStart = 600;
-    let spacing = 80;
+  shuffle(array){
+    for(let i=array.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [array[i],array[j]]=[array[j],array[i]];
+    }
+    return array;
+  }
 
+  initDeck() {
+    const suits=["♠","♥","♦","♣"];
+    this.deck=[];
+    for(let s of suits) for(let r=3;r<=15;r++) this.deck.push({rank:r,suit:s});
+    this.deck.push({rank:16,suit:"🃏"});
+    this.deck.push({rank:16,suit:"🃏"});
+    Phaser.Utils.Array.Shuffle(this.deck);
+  }
+
+  dealCards(numPlayers){
+    this.hands = Array.from({length:numPlayers}, ()=>[]);
+    let i=0;
+    while(this.deck.length>0){
+      this.hands[i%numPlayers].push(this.deck.pop());
+      i++;
+    }
+    this.hands.forEach(hand=>hand.sort((a,b)=>a.rank-b.rank));
+  }
+
+  cardToKey(card){
+    const ranks={11:"J",12:"Q",13:"K",14:"A",15:"2",16:"Joker"};
+    if(card.rank===16) return "Joker";
+    if(card.rank===13) return "K"+card.suit;
+    if(card.rank===12) return "Q"+card.suit;
+    if(card.rank===11) return "J"+card.suit;
+    if(card.rank===14) return "A"+card.suit;
+    if(card.rank===15) return "2"+card.suit;
+    return card.rank+card.suit;
+  }
+
+  renderHand(playerIndex){
+    if(this.handImages) this.handImages.forEach(t=>t.destroy());
+    this.handImages=[];
+
+    const hand = this.hands[playerIndex];
+    const screenWidth = 1280, screenHeight = 720;
+    const centerX = screenWidth/2;
+    const bottomY = screenHeight-150;
+    const baseSpacing = 60;
+    const maxRotation = Phaser.Math.DegToRad(20);
+
+    const updatePositions = (hoverIndex=null, scaleFactor=1.4)=>{
+      const total = hand.length;
+      for(let i=0;i<total;i++){
+        const img = this.handImages[i];
+        const dx=(i-(total-1)/2)/((total-1)/2);
+        const rotation = dx*maxRotation;
+        const y = bottomY - dx*dx*-50;
+        let spacing = baseSpacing;
+        let scale = 1;
+        if(hoverIndex!==null){
+          if(i===hoverIndex) scale=scaleFactor;
+          spacing=baseSpacing*(hoverIndex===null?1:1+(i===hoverIndex?0.2:0.1));
+        }
+        const x = centerX - ((total-1)*spacing)/2 + i*spacing;
+        img.setPosition(x,y);
+        img.setRotation(rotation);
+        img.setScale(scale);
+      }
+    };
+
+    // Create images
     hand.forEach((card,i)=>{
-        let key = card.rank === 16 ? 'Joker' : `${card.rank}${card.suit}`;
-        let f = this.frames[key];
-        let img = this.add.image(xStart + i*spacing, yStart, 'cardsheet')
-            .setCrop(f.x, f.y, f.width, f.height)
-            .setInteractive({useHandCursor:true})
-            .setScale(1);
+      const key = this.cardToKey(card);
+      const img = this.createCardImage(this.frames[key]);
+      img.setData('card',card);
+      img.setData('index',i);
 
-        if(this.selectedCards.includes(card)) img.setTint(0xaaaaaa);
+      img.on('pointerdown', ()=>{
+        if(this.selectedRank && card.rank!==this.selectedRank) return;
+        if(this.selectedCards.includes(card)){
+          this.selectedCards.splice(this.selectedCards.indexOf(card),1);
+          img.clearTint();
+        } else {
+          if(this.selectedCards.length===0)this.selectedRank=card.rank;
+          this.selectedCards.push(card);
+          img.setTint(0x8888ff);
+        }
+      });
 
-        img.on('pointerdown', ()=>{ this.toggleSelect(card, img); });
-        this.handTexts.push(img);
+      img.on('pointerover', ()=>updatePositions(i));
+      img.on('pointerout', ()=>updatePositions(null));
+      this.handImages.push(img);
     });
+
+    updatePositions(null); // <-- THIS ensures cards are centered immediately
   }
 
-  toggleSelect(card, img){
-    let idx = this.selectedCards.indexOf(card);
-    if(idx>=0){
-        this.selectedCards.splice(idx,1);
-        img.clearTint();
-    } else {
-        this.selectedCards.push(card);
-        img.setTint(0xaaaaaa);
+  getTopSet(){ return this.table.length>0?this.table[this.table.length-1]:null; }
+
+  canPlaySet(cards){
+    if(cards.length===0)return false;
+    if(!cards.every(c=>c.rank===cards[0].rank))return false;
+    let topSet=this.getTopSet();
+    if(!topSet)return true;
+    if(cards.length!==topSet.length)return false;
+    let top=topSet[0],rank=cards[0].rank;
+    if(top.rank===16 && rank===3 && cards[0].suit==="♠")return true;
+    return this.revolution?rank<top.rank:rank>top.rank;
+  }
+
+  playerAttemptPlay(){
+    if(this.currentPlayer!==0)return;
+    if(!this.canPlaySet(this.selectedCards)){
+      this.statusText.setText("Invalid play!"); return;
     }
-    this.renderHand();
+    this.playCard(0,this.selectedCards);
+    this.selectedCards=[]; this.selectedRank=null;
+    this.renderHand(0);
+    this.nextTurn();
   }
 
-  playCards() {
-    console.log("Play clicked:", this.selectedCards);
-    let yBase = 360;
-    let spacingX = 60;
-    let xCenter = 640;
-    let totalWidth = this.selectedCards.length*spacingX;
+  playerPass(){
+    if(this.currentPlayer!==0)return;
+    this.passesInRow++;
+    this.statusText.setText("You pass!");
+    this.nextTurn();
+  }
 
-    this.selectedCards.forEach((card,i)=>{
-      let key = card.rank === 16 ? 'Joker' : `${card.rank}${card.suit}`;
-      let f = this.frames[key];
-      let img = this.add.image(xCenter - totalWidth/2 + i*spacingX, yBase, 'cardsheet')
-          .setCrop(f.x,f.y,f.width,f.height)
-          .setScale(1)
-          .setDepth(1);
-      this.tableTexts.push(img);
+  playCard(playerIndex,cards){
+    this.hands[playerIndex] = this.hands[playerIndex].filter(c=>!cards.includes(c));
+    this.table.push(cards);
+
+    const yBase=300, spacingY=60, xCenter=500;
+    cards.forEach((card,i)=>{
+      const totalWidth=cards.length*40;
+      const x = xCenter-totalWidth/2 + i*40;
+      const key=this.cardToKey(card);
+      const img=this.createCardImage(this.frames[key]);
+      img.setPosition(x,yBase+(this.table.length-1)*spacingY);
+      this.tableImages.push(img);
     });
 
-    this.selectedCards=[];
-    this.renderHand();
+    this.passesInRow=0;
+    if(cards.length===4){
+      this.revolution=!this.revolution;
+      this.add.text(300,200,"REVOLUTION!",{fontSize:"32px",color:"#f0f"});
+    }
   }
 
-  passTurn() {
-    console.log("Pass clicked");
+  aiTurn(playerIndex){
+    let topSet=this.getTopSet();
+    let requiredCount=topSet?topSet.length:1;
+    let ranks=[...new Set(this.hands[playerIndex].map(c=>c.rank))];
+    for(let r of ranks){
+      let candidates=this.hands[playerIndex].filter(c=>c.rank===r).slice(0,requiredCount);
+      if(candidates.length===requiredCount && this.canPlaySet(candidates)){
+        this.playCard(playerIndex,candidates);
+        return;
+      }
+    }
+    this.passesInRow++;
+  }
+
+  nextTurn(){
+    if(this.hands[0].length===0){ this.statusText.setText("You win!"); return; }
+    this.currentPlayer=(this.currentPlayer+1)%4;
+    if(this.currentPlayer===0){
+      this.statusText.setText("Your turn!");
+      this.renderHand(0);
+    } else {
+      this.statusText.setText("AI "+this.currentPlayer+"'s turn...");
+      this.time.delayedCall(1000, ()=>{ this.aiTurn(this.currentPlayer); this.nextTurn(); });
+    }
+    if(this.passesInRow>=3){
+      this.tableImages.forEach(img=>img.destroy());
+      this.tableImages=[];
+      this.table=[];
+    }
   }
 }
 
-// Phaser config
 const config = {
   type: Phaser.AUTO,
-  width: 1280,
-  height: 720,
-  backgroundColor: "#1d1d1d",
-  scene: UISandbox,
-  parent: "game-container"
+  width:1280,
+  height:720,
+  backgroundColor:"#1d1d1d",
+  scene: TycoonUI,
+  parent:"game-container"
 };
 
 const game = new Phaser.Game(config);
 
-// Centered 16:9 scaling
-function resizeGame() {
-  const container = document.getElementById("game-container");
-  const canvas = container.querySelector("canvas");
-
-  const scaleX = container.clientWidth / 1280;
-  const scaleY = container.clientHeight / 720;
-  const scale = Math.min(scaleX, scaleY);
-
-  const offsetX = (container.clientWidth - 1280*scale)/2;
-  const offsetY = (container.clientHeight - 720*scale)/2;
-
-  canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+function resizeGame(){
+  const container=document.getElementById("game-container");
+  const canvas=container.querySelector("canvas");
+  const scale=Math.min(container.clientWidth/1280, container.clientHeight/720);
+  const offsetX=(container.clientWidth - 1280*scale)/2;
+  const offsetY=(container.clientHeight - 720*scale)/2;
+  canvas.style.transform=`translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
 }
-
 window.addEventListener("resize", resizeGame);
 window.addEventListener("load", resizeGame);
 </script>

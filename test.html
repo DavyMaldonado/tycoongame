@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Card Cropping Sandbox</title>
+<title>Card Sandbox Hover Effect</title>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
 <style>
 html, body { margin:0; padding:0; width:100%; height:100%; background-color:#111; overflow:hidden; }
@@ -19,89 +19,157 @@ class CardSandbox extends Phaser.Scene {
     super();
     this.handCards = [];
     this.handImages = [];
+    this.orderedFrames = [];
   }
 
   preload(){
-    // Use the global base64 string from cards-base64.js
-    this.load.image('cardsheet', "https://imgur.com/a/Yv2CZ5l");
+    this.load.image('cardsheet', 'https://davymaldonado.github.io/tycoongame/cards.png');
   }
 
   create(){
-    const img = this.textures.get('cardsheet').getSourceImage();
-    if (!img || img.width === 0) {
-      console.error("Embedded image failed to load or is invalid.");
-      return;
-    }
-
-    // Define frames
     const cardWidth = 147;
     const cardHeight = 240;
     const leftMargin = 11;
     const topGap = 3;
-    const rowGap = 22;
+    const columnGap = 22; 
+    const rowGap = 4;     
     const suits = ['♣','♦','♥','♠'];
 
     this.frames = {};
-    for(let col=0; col<4; col++){
-      for(let row=0; row<12; row++){
-        const x = leftMargin + col*(cardWidth + topGap);
-        const y = row*(cardHeight + rowGap);
-        let rank = row===0 ? 14 : row===10 ? 11 : row===11 ? 12 : row+1;
-        this.frames[`${rank}${suits[col]}`] = {x,y,width:cardWidth,height:cardHeight};
+
+    // --- Standard cards (rows 0–3) ---
+    const ranks = [14,2,3,4,5,6,7,8,9,10,11,12]; // A=14, 2=2, 3-10=3-10, J=11, Q=12
+    for(let r=0; r<4; r++){          
+      const suit = suits[r];
+      for(let c=0; c<12; c++){       
+        const x = leftMargin + c * (cardWidth + columnGap);
+        const y = topGap + r * (cardHeight + rowGap);
+        const key = `${ranks[c]}${suit}`;
+        this.frames[key] = {x, y, width: cardWidth, height: cardHeight};
+        this.orderedFrames.push(key);
       }
     }
 
-    const specialCol = 4;
-    const specialX = leftMargin + specialCol*(cardWidth + topGap);
-    const specialCards = ['Joker','Joker','Back','K♣','K♦','K♥','K♠'];
-    for(let i=0;i<specialCards.length;i++){
-      const y = i*(cardHeight + rowGap);
-      this.frames[specialCards[i]] = {x:specialX,y,width:cardWidth,height:cardHeight};
-    }
+    // --- Special row ---
+    const specialRowIndex = 4; 
+    const specialCols = ['Joker','Joker','Back','K♣','K♦','K♥','K♠'];
+    specialCols.forEach((key, colIndex)=>{
+      const x = leftMargin + colIndex * (cardWidth + columnGap);
+      const y = topGap + specialRowIndex * (cardHeight + rowGap);
+      this.frames[key] = {x, y, width: cardWidth, height: cardHeight};
+      if(key !== 'Back') this.orderedFrames.push(key);
+    });
 
-    // Example hand
-    this.handCards = [
-      {rank:3,suit:'♣'}, {rank:5,suit:'♦'}, {rank:7,suit:'♥'},
-      {rank:11,suit:'♠'}, {rank:16,suit:'Joker'}, {rank:4,suit:'♣'}
-    ];
-
-    this.renderHand();
+    this.time.delayedCall(50, () => this.renderHand());
   }
 
   createCardImage(frame){
+    if (!frame) return null;
     const {x,y,width,height} = frame;
     const key = `card_${x}_${y}`;
     if(!this.textures.exists(key)){
       const img = this.textures.get('cardsheet').getSourceImage();
-      if(!img || img.width===0 || img.height===0){
-        console.warn("Source image not ready");
-        return null;
-      }
-      this.textures.addCanvas(key,width,height);
-      const ctx = this.textures.getCanvas(key).getContext('2d');
-      ctx.drawImage(img,x,y,width,height,0,0,width,height);
+      const canvas = this.textures.createCanvas(key, width, height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, x, y, width, height, 0, 0, width, height);
+      canvas.refresh();
     }
     return this.add.image(0,0,key);
+  }
+
+  shuffle(array){
+    for(let i=array.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [array[i],array[j]] = [array[j],array[i]];
+    }
+    return array;
   }
 
   renderHand(){
     if(this.handImages) this.handImages.forEach(t=>t.destroy());
     this.handImages=[];
-    const xStart = 100;
-    const yStart = 600;
-    const spacing = 160;
 
+    // Pick 10 random cards
+    const shuffled = this.shuffle([...this.orderedFrames]);
+    this.handCards = shuffled.slice(0,10).map(key => ({key}));
+
+    // --- Tycoon order: 3→10,J,Q,K,A,2, Jokers last ---
+    const tycoonOrder = [3,4,5,6,7,8,9,10,11,12,13,14,2]; 
+    const rankMap = {};
+    tycoonOrder.forEach((r,i)=> rankMap[r]=i);
+
+    this.handCards.sort((a,b)=>{
+      if(a.key.includes('Joker')) return 1;
+      if(b.key.includes('Joker')) return -1;
+
+      const getRank = key => {
+        if(key.startsWith('K')) return rankMap[13];
+        if(key.startsWith('Q')) return rankMap[12];
+        if(key.startsWith('J')) return rankMap[11];
+        if(key.startsWith('A')) return rankMap[14];
+        if(key.startsWith('2')) return rankMap[2];
+        const numeric = parseInt(key);
+        return rankMap[numeric] ?? 0;
+      };
+
+      const rankA = getRank(a.key);
+      const rankB = getRank(b.key);
+      if(rankA !== rankB) return rankA - rankB;
+
+      const suitOrder = ['♣','♦','♥','♠'];
+      const suitA = a.key.slice(-1);
+      const suitB = b.key.slice(-1);
+      return suitOrder.indexOf(suitA) - suitOrder.indexOf(suitB);
+    });
+
+    // --- Fanning parameters ---
+    const screenWidth = 1280;
+    const screenHeight = 720;
+    const centerX = screenWidth / 2;
+    const bottomY = screenHeight - 100;
+    const baseSpacing = 60;
+    const maxRotation = Phaser.Math.DegToRad(20);
+
+    const updatePositions = (hoverIndex=null, scaleFactor=1.4)=>{
+      const total = this.handCards.length;
+      const totalWidth = baseSpacing * (total-1);
+      const startX = centerX - totalWidth/2;
+      for(let i=0;i<total;i++){
+        const cardImg = this.handImages[i];
+        const dx = (i - (total-1)/2) / ((total-1)/2);
+        const rotation = dx * maxRotation;
+        const y = bottomY - dx*dx*-50;
+
+        let spacing = baseSpacing;
+        let scale = 1;
+        if(hoverIndex !== null){
+          if(i === hoverIndex) scale = scaleFactor;
+          spacing = baseSpacing * (hoverIndex===null?1 : 1 + (i===hoverIndex?0.2:0.1));
+        }
+
+        const x = centerX - ((total-1)*spacing)/2 + i*spacing;
+        cardImg.setPosition(x,y);
+        cardImg.setRotation(rotation);
+        cardImg.setScale(scale);
+      }
+    };
+
+    // Create card images
     this.handCards.forEach((card,i)=>{
-      const key = card.rank===16 ? 'Joker' : `${card.rank}${card.suit}`;
-      const frame = this.frames[key];
-      const img = this.createCardImage(frame);
-      if(!img) return;
-      img.setInteractive({useHandCursor:true})
-         .setScale(1)
-         .setX(xStart + i*spacing)
-         .setY(yStart);
+      const frame = this.frames[card.key];
+      const img = this.createCardImage(frame).setOrigin(0.5,0.5);
+      img.setData('index', i);
+      img.setInteractive({useHandCursor:true});
+
+      // Hover events
+      img.on('pointerover', ()=>updatePositions(i));
+      img.on('pointerout', ()=>updatePositions(null));
+
       this.handImages.push(img);
     });
+
+    // Initial placement
+    updatePositions(null);
   }
 }
 
@@ -117,7 +185,6 @@ const config = {
 
 const game = new Phaser.Game(config);
 
-// Centered 16:9 scaling
 function resizeGame(){
   const container = document.getElementById("game-container");
   const canvas = container.querySelector("canvas");
