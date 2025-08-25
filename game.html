@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tycoon UI Sandbox Cards</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #111;
+  overflow: hidden;
+}
+#game-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+#game-container canvas {
+  transform-origin: top left;
+  display: block;
+  position: absolute;
+}
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+
+<script>
+class UISandbox extends Phaser.Scene {
+  constructor() {
+    super();
+    this.handCards = [];
+    this.handTexts = [];
+    this.selectedCards = [];
+    this.frames = {};
+  }
+
+  preload() {
+    this.load.image('cardsheet', 'cards.png'); // your PNG path
+  }
+
+  create() {
+    // Create card frames based on your layout
+    this.createCardFrames();
+
+    // Table background
+    this.add.rectangle(640, 360, 1000, 400, 0x2b2b2b).setOrigin(0.5,0.5);
+
+    this.tableTexts = [];
+    this.playedCards = [];
+
+    // Example hand
+    this.handCards = [
+      {rank:3,suit:"♣"}, {rank:5,suit:"♦"}, {rank:7,suit:"♥"},
+      {rank:11,suit:"♠"}, {rank:16,suit:"Joker"}, {rank:4,suit:"♣"}
+    ];
+
+    this.statusText = this.add.text(20, 20, "UI Sandbox Cards 16:9", {fontSize:"28px", color:"#fff"});
+
+    this.renderHand();
+
+    // Buttons
+    this.playBtn = this.add.text(1000, 650, "[ PLAY ]", {fontSize:"28px", color:"#4f4", backgroundColor:"#222", padding:{x:10,y:5}})
+      .setInteractive({useHandCursor:true})
+      .on('pointerover', ()=>this.playBtn.setScale(1.1))
+      .on('pointerout', ()=>this.playBtn.setScale(1))
+      .on('pointerdown', ()=>this.playCards());
+
+    this.passBtn = this.add.text(1150, 650, "[ PASS ]", {fontSize:"28px", color:"#f44", backgroundColor:"#222", padding:{x:10,y:5}})
+      .setInteractive({useHandCursor:true})
+      .on('pointerover', ()=>this.passBtn.setScale(1.1))
+      .on('pointerout', ()=>this.passBtn.setScale(1))
+      .on('pointerdown', ()=>this.passTurn());
+  }
+
+  createCardFrames() {
+    const cardWidth = 72;  // adjust to your PNG card width
+    const cardHeight = 96; // adjust to your PNG card height
+    const leftMargin = 11;
+    const topGap = 3;
+    const rowGap = 22;
+
+    const suits = ['♣','♦','♥','♠'];
+
+    // First 4 columns: suits
+    for(let col=0; col<4; col++){
+      for(let row=0; row<12; row++){
+        let x = leftMargin + col*(cardWidth + topGap);
+        let y = row*(cardHeight + rowGap);
+        let rank;
+        if(row===0) rank=14;       // Ace
+        else if(row===10) rank=11; // Jack
+        else if(row===11) rank=12; // Queen
+        else rank=row+1;            // 2..10
+        let suit = suits[col];
+        this.frames[`${rank}${suit}`] = {x:x, y:y, width:cardWidth, height:cardHeight};
+      }
+    }
+
+    // Column 5: Jokers, back, kings
+    const specialCol = 4;
+    const specialX = leftMargin + specialCol*(cardWidth + topGap);
+    const specialCards = ['Joker','Joker','Back','K♣','K♦','K♥','K♠'];
+    for(let i=0;i<specialCards.length;i++){
+      let y = i*(cardHeight + rowGap);
+      this.frames[specialCards[i]] = {x:specialX, y:y, width:cardWidth, height:cardHeight};
+    }
+  }
+
+  renderHand() {
+    if(this.handTexts) this.handTexts.forEach(t=>t.destroy());
+    this.handTexts=[];
+
+    let hand = this.handCards;
+    let xStart = 100;
+    let yStart = 600;
+    let spacing = 80;
+
+    hand.forEach((card,i)=>{
+        let key = card.rank === 16 ? 'Joker' : `${card.rank}${card.suit}`;
+        let f = this.frames[key];
+        let img = this.add.image(xStart + i*spacing, yStart, 'cardsheet')
+            .setCrop(f.x, f.y, f.width, f.height)
+            .setInteractive({useHandCursor:true})
+            .setScale(1);
+
+        if(this.selectedCards.includes(card)) img.setTint(0xaaaaaa);
+
+        img.on('pointerdown', ()=>{ this.toggleSelect(card, img); });
+        this.handTexts.push(img);
+    });
+  }
+
+  toggleSelect(card, img){
+    let idx = this.selectedCards.indexOf(card);
+    if(idx>=0){
+        this.selectedCards.splice(idx,1);
+        img.clearTint();
+    } else {
+        this.selectedCards.push(card);
+        img.setTint(0xaaaaaa);
+    }
+    this.renderHand();
+  }
+
+  playCards() {
+    console.log("Play clicked:", this.selectedCards);
+    let yBase = 360;
+    let spacingX = 60;
+    let xCenter = 640;
+    let totalWidth = this.selectedCards.length*spacingX;
+
+    this.selectedCards.forEach((card,i)=>{
+      let key = card.rank === 16 ? 'Joker' : `${card.rank}${card.suit}`;
+      let f = this.frames[key];
+      let img = this.add.image(xCenter - totalWidth/2 + i*spacingX, yBase, 'cardsheet')
+          .setCrop(f.x,f.y,f.width,f.height)
+          .setScale(1)
+          .setDepth(1);
+      this.tableTexts.push(img);
+    });
+
+    this.selectedCards=[];
+    this.renderHand();
+  }
+
+  passTurn() {
+    console.log("Pass clicked");
+  }
+}
+
+// Phaser config
+const config = {
+  type: Phaser.AUTO,
+  width: 1280,
+  height: 720,
+  backgroundColor: "#1d1d1d",
+  scene: UISandbox,
+  parent: "game-container"
+};
+
+const game = new Phaser.Game(config);
+
+// Centered 16:9 scaling
+function resizeGame() {
+  const container = document.getElementById("game-container");
+  const canvas = container.querySelector("canvas");
+
+  const scaleX = container.clientWidth / 1280;
+  const scaleY = container.clientHeight / 720;
+  const scale = Math.min(scaleX, scaleY);
+
+  const offsetX = (container.clientWidth - 1280*scale)/2;
+  const offsetY = (container.clientHeight - 720*scale)/2;
+
+  canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+}
+
+window.addEventListener("resize", resizeGame);
+window.addEventListener("load", resizeGame);
+</script>
+</body>
+</html>

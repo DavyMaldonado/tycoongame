@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Card Cropping Sandbox</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<style>
+html, body { margin:0; padding:0; width:100%; height:100%; background-color:#111; overflow:hidden; }
+#game-container { width:100%; height:100%; position:relative; overflow:hidden; }
+#game-container canvas { transform-origin: top left; display:block; position:absolute; }
+</style>
+</head>
+<body>
+<div id="game-container"></div>
+
+<script>
+class CardSandbox extends Phaser.Scene {
+  constructor(){
+    super();
+    this.handCards = [];
+    this.handImages = [];
+  }
+
+  preload(){
+    // Use the global base64 string from cards-base64.js
+    this.load.image('cardsheet', "https://imgur.com/a/Yv2CZ5l");
+  }
+
+  create(){
+    const img = this.textures.get('cardsheet').getSourceImage();
+    if (!img || img.width === 0) {
+      console.error("Embedded image failed to load or is invalid.");
+      return;
+    }
+
+    // Define frames
+    const cardWidth = 147;
+    const cardHeight = 240;
+    const leftMargin = 11;
+    const topGap = 3;
+    const rowGap = 22;
+    const suits = ['♣','♦','♥','♠'];
+
+    this.frames = {};
+    for(let col=0; col<4; col++){
+      for(let row=0; row<12; row++){
+        const x = leftMargin + col*(cardWidth + topGap);
+        const y = row*(cardHeight + rowGap);
+        let rank = row===0 ? 14 : row===10 ? 11 : row===11 ? 12 : row+1;
+        this.frames[`${rank}${suits[col]}`] = {x,y,width:cardWidth,height:cardHeight};
+      }
+    }
+
+    const specialCol = 4;
+    const specialX = leftMargin + specialCol*(cardWidth + topGap);
+    const specialCards = ['Joker','Joker','Back','K♣','K♦','K♥','K♠'];
+    for(let i=0;i<specialCards.length;i++){
+      const y = i*(cardHeight + rowGap);
+      this.frames[specialCards[i]] = {x:specialX,y,width:cardWidth,height:cardHeight};
+    }
+
+    // Example hand
+    this.handCards = [
+      {rank:3,suit:'♣'}, {rank:5,suit:'♦'}, {rank:7,suit:'♥'},
+      {rank:11,suit:'♠'}, {rank:16,suit:'Joker'}, {rank:4,suit:'♣'}
+    ];
+
+    this.renderHand();
+  }
+
+  createCardImage(frame){
+    const {x,y,width,height} = frame;
+    const key = `card_${x}_${y}`;
+    if(!this.textures.exists(key)){
+      const img = this.textures.get('cardsheet').getSourceImage();
+      if(!img || img.width===0 || img.height===0){
+        console.warn("Source image not ready");
+        return null;
+      }
+      this.textures.addCanvas(key,width,height);
+      const ctx = this.textures.getCanvas(key).getContext('2d');
+      ctx.drawImage(img,x,y,width,height,0,0,width,height);
+    }
+    return this.add.image(0,0,key);
+  }
+
+  renderHand(){
+    if(this.handImages) this.handImages.forEach(t=>t.destroy());
+    this.handImages=[];
+    const xStart = 100;
+    const yStart = 600;
+    const spacing = 160;
+
+    this.handCards.forEach((card,i)=>{
+      const key = card.rank===16 ? 'Joker' : `${card.rank}${card.suit}`;
+      const frame = this.frames[key];
+      const img = this.createCardImage(frame);
+      if(!img) return;
+      img.setInteractive({useHandCursor:true})
+         .setScale(1)
+         .setX(xStart + i*spacing)
+         .setY(yStart);
+      this.handImages.push(img);
+    });
+  }
+}
+
+// Phaser config
+const config = {
+  type: Phaser.AUTO,
+  width:1280,
+  height:720,
+  backgroundColor:"#1d1d1d",
+  scene: CardSandbox,
+  parent:"game-container"
+};
+
+const game = new Phaser.Game(config);
+
+// Centered 16:9 scaling
+function resizeGame(){
+  const container = document.getElementById("game-container");
+  const canvas = container.querySelector("canvas");
+  const scale = Math.min(container.clientWidth/1280, container.clientHeight/720);
+  const offsetX = (container.clientWidth - 1280*scale)/2;
+  const offsetY = (container.clientHeight - 720*scale)/2;
+  canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+}
+window.addEventListener("resize", resizeGame);
+window.addEventListener("load", resizeGame);
+</script>
+</body>
+</html>
