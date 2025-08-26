@@ -91,7 +91,7 @@ class CardSandbox extends Phaser.Scene {
 
     // Pick 10 random cards
     const shuffled = this.shuffle([...this.orderedFrames]);
-    this.handCards = shuffled.slice(0,10).map(key => ({key}));
+    this.handCards = shuffled.slice(0,14).map(key => ({key}));
 
     // --- Tycoon order: 3→10,J,Q,K,A,2, Jokers last ---
     const tycoonOrder = [3,4,5,6,7,8,9,10,11,12,13,14,2]; 
@@ -127,27 +127,26 @@ class CardSandbox extends Phaser.Scene {
     const screenHeight = 720;
     const centerX = screenWidth / 2;
     const bottomY = screenHeight - 100;
-    const baseSpacing = 60;
+    const baseSpacing = 70;
     const maxRotation = Phaser.Math.DegToRad(20);
 
     const updatePositions = (hoverIndex=null, scaleFactor=1.4)=>{
       const total = this.handCards.length;
       const totalWidth = baseSpacing * (total-1);
       const startX = centerX - totalWidth/2;
+
       for(let i=0;i<total;i++){
         const cardImg = this.handImages[i];
         const dx = (i - (total-1)/2) / ((total-1)/2);
         const rotation = dx * maxRotation;
         const y = bottomY - dx*dx*-50;
 
-        let spacing = baseSpacing;
         let scale = 1;
-        if(hoverIndex !== null){
-          if(i === hoverIndex) scale = scaleFactor;
-          spacing = baseSpacing * (hoverIndex===null?1 : 1 + (i===hoverIndex?0.2:0.1));
+        if(hoverIndex !== null && i === hoverIndex){
+          scale = scaleFactor; // Only apply scale, no extra spacing
         }
 
-        const x = centerX - ((total-1)*spacing)/2 + i*spacing;
+        const x = startX + i*baseSpacing;
         cardImg.setPosition(x,y);
         cardImg.setRotation(rotation);
         cardImg.setScale(scale);
