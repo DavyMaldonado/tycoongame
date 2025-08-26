@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tycoon 4-Player Manual</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+</head>
+<body>
+<script>
+const JOKER_RANK = 16;
+const MIN_RANK = 3;
+const MAX_RANK = 15;
+
+class TycoonScene extends Phaser.Scene {
+    constructor() {
+        super();
+        this.deck = [];
+        this.hands = [];
+        this.table = [];
+        this.selectedCards = [];
+        this.selectedRank = null;
+        this.handTexts = [];
+        this.tableTexts = [];
+        this.statusText = null;
+
+        this.currentPlayer = 0;
+        this.lastPlayerToPlay = undefined;
+        this.passesSinceLastPlay = 0;
+        this.newRoundStarter = null;
+
+        this.revolution = false; // <-- Revolution mode flag
+    }
+
+    preload() {}
+
+    create() {
+        this.initDeck();
+        this.dealCards(4);
+        this.renderAllHands();
+
+        this.statusText = this.add.text(20, 20, "Player 0's turn", { fontSize: "20px", color: "#fff" });
+
+        this.passBtn = this.add.text(50, 450, "[ PASS ]", {fontSize:"28px", color:"#f44", backgroundColor:"#222", padding:{x:10,y:5}})
+            .setInteractive().on("pointerdown", ()=>this.playerPass());
+
+        this.playBtn = this.add.text(200, 450, "[ PLAY ]", {fontSize:"28px", color:"#4f4", backgroundColor:"#222", padding:{x:10,y:5}})
+            .setInteractive().on("pointerdown", ()=>this.playerAttemptPlay());
+    }
+
+    initDeck() {
+        const suits=["♠","♥","♦","♣"];
+        this.deck=[];
+        for(let s of suits) for(let r=MIN_RANK;r<=MAX_RANK;r++) this.deck.push({rank:r,suit:s});
+        this.deck.push({rank:JOKER_RANK,suit:"🃏"});
+        this.deck.push({rank:JOKER_RANK,suit:"🃏"});
+        Phaser.Utils.Array.Shuffle(this.deck);
+    }
+
+    dealCards(numPlayers){
+        this.hands=Array.from({length:numPlayers},()=>[]);
+        let i=0;
+        while(this.deck.length>0){ this.hands[i%numPlayers].push(this.deck.pop()); i++; }
+        this.hands.forEach(hand=>hand.sort((a,b)=>a.rank-b.rank));
+    }
+
+    cardToString(card){
+        const ranks={11:"J",12:"Q",13:"K",14:"A",15:"2",16:"Joker"};
+        return (ranks[card.rank]||card.rank)+card.suit;
+    }
+
+    // Revolution-aware rank values
+    rankValue(rank){
+        if(rank === JOKER_RANK) return this.revolution ? 20 : 20; // Jokers always highest
+        if(this.revolution){
+            const order = [15,14,13,12,11,10,9,8,7,6,5,4,3];
+            return order.indexOf(rank) + 1;
+        } else {
+            return rank;
+        }
+    }
+
+    renderAllHands() {
+        if(this.handTexts) this.handTexts.forEach(t=>t.destroy());
+        this.handTexts = [];
+
+        const yPositions = [100, 200, 300, 400];
+
+        for(let player=0; player<4; player++){
+            let hand = this.hands[player];
+            hand.forEach((card, i)=>{
+                let txt = this.add.text(50 + i*40, yPositions[player], this.cardToString(card), 
+                    { fontSize:"24px", color:"#fff" });
+                txt.originalY = yPositions[player];
+                txt.cardRef = card;
+
+                if(player === this.currentPlayer){
+                    txt.setInteractive();
+                    txt.on("pointerdown", ()=> this.toggleSelect(card));
+                } else {
+                    txt.disableInteractive();
+                }
+
+                this.handTexts.push(txt);
+            });
+        }
+        this.renderHandHighlights();
+    }
+
+    toggleSelect(card){
+        if(!this.hands[this.currentPlayer].includes(card)) return;
+
+        let idx = this.selectedCards.indexOf(card);
+        if(idx >= 0){
+            this.selectedCards.splice(idx,1);
+            if(this.selectedCards.length===0) this.selectedRank=null;
+        } else {
+            if(this.selectedCards.length >= 4) return; // limit 4 cards
+            if(this.selectedCards.length === 0) {
+                if(card.rank !== JOKER_RANK) this.selectedRank = card.rank;
+                this.selectedCards.push(card);
+            } else if(card.rank === this.selectedRank || card.rank === JOKER_RANK) {
+                this.selectedCards.push(card);
+            }
+        }
+        this.renderHandHighlights();
+    }
+
+    renderHandHighlights(){
+        this.handTexts.forEach(txt=>{
+            const card = txt.cardRef;
+            txt.setStyle({backgroundColor:"transparent", color:"#fff"});
+            txt.y = txt.originalY;
+
+            if(this.selectedCards.includes(card)){
+                txt.setStyle({backgroundColor:"#daa520", color:"#000"});
+                txt.y = txt.originalY - 10;
+            }
+
+            let owner = this.hands.findIndex(hand => hand.includes(card));
+            if(owner === -1) return;
+
+            let playable = true;
+            const topSet = this.getTopTableSet();
+            const hand = this.hands[owner];
+
+            if(topSet && topSet.length > 0){
+                const topCard = topSet[0];
+                if(topCard.rank === JOKER_RANK){
+                    if(card.rank !== 3 || card.suit !== "♠"){
+                        playable = false;
+                    }
+                }
+            }
+
+            if(topSet && card.rank !== JOKER_RANK){
+                const neededCount = topSet.length;
+                const rankCount = hand.filter(c=>c.rank===card.rank).length;
+                const jokerCount = hand.filter(c=>c.rank===JOKER_RANK).length;
+                if(rankCount + jokerCount < neededCount) playable = false;
+
+                const topRank = Math.max(...topSet.filter(c=>c.rank!==JOKER_RANK).map(c=>this.rankValue(c.rank)));
+                const playRank = this.rankValue(card.rank);
+                if(playRank <= topRank) playable = false;
+            }
+
+            if(owner === this.currentPlayer){
+                if(this.selectedCards.length > 0 && !this.selectedCards.includes(card)){
+                    if(card.rank !== this.selectedRank && card.rank !== JOKER_RANK) playable = false;
+                }
+            } else {
+                playable = false;
+            }
+
+            if(playable){
+                txt.setAlpha(1);
+                txt.setInteractive();
+            } else {
+                txt.setAlpha(0.3);
+                txt.disableInteractive();
+            }
+        });
+    }
+
+    getTopTableSet() {
+        if(this.table.length === 0) return null;
+        return this.table[this.table.length - 1];
+    }
+
+    playerAttemptPlay() {
+        if(this.selectedCards.length === 0) return;
+
+        if(this.selectedCards.length > 4){
+            this.statusText.setText("Invalid! You cannot play more than 4 cards.");
+            return;
+        }
+
+        const nonJokers = this.selectedCards.filter(c => c.rank !== JOKER_RANK);
+        if (nonJokers.length > 0) {
+            const baseRank = nonJokers[0].rank;
+            if (!nonJokers.every(c => c.rank === baseRank)) {
+                this.statusText.setText("Invalid set! All non-Joker cards must match.");
+                return;
+            }
+        }
+
+        const topSet = this.getTopTableSet();
+        if (topSet) {
+            if (topSet.length !== this.selectedCards.length) {
+                this.statusText.setText(`Invalid set! Must play ${topSet.length} cards.`);
+                return;
+            }
+            const topRank = Math.max(...topSet.filter(c=>c.rank!==JOKER_RANK).map(c=>this.rankValue(c.rank)));
+            const playRank = nonJokers.length > 0 ? Math.max(...nonJokers.map(c=>this.rankValue(c.rank))) : this.rankValue(JOKER_RANK);
+            if(playRank <= topRank){
+                this.statusText.setText("Invalid set! Must beat the previous set.");
+                return;
+            }
+        }
+
+        // Revolution check
+        const baseRank = nonJokers.length > 0 ? nonJokers[0].rank : null;
+        if (this.selectedCards.length === 4 && baseRank !== null) {
+            const countSame = nonJokers.filter(c=>c.rank===baseRank).length + this.selectedCards.filter(c=>c.rank===JOKER_RANK).length;
+            if (countSame === 4) {
+                this.revolution = !this.revolution;
+                this.statusText.setText(`Revolution! Player ${this.currentPlayer} flipped the order!`);
+            }
+        }
+
+        this.table.push(this.selectedCards.slice());
+        this.hands[this.currentPlayer] = this.hands[this.currentPlayer].filter(c => !this.selectedCards.includes(c));
+        const playedCards = this.selectedCards.slice();
+        this.selectedCards = [];
+        this.selectedRank = null;
+
+        this.renderAllHands();
+        this.renderTable();
+
+        this.lastPlayerToPlay = this.currentPlayer;
+        this.passesSinceLastPlay = 0;
+
+        const playedRanks = playedCards.map(c => c.rank);
+        const topTableBefore = topSet ? topSet[0] : null;
+        let clearTable = false;
+
+        if (playedRanks.includes(8)) clearTable = true;
+        if (topTableBefore && topTableBefore.rank === JOKER_RANK) {
+            if (playedCards.length === 1 && playedCards[0].rank === 3 && playedCards[0].suit === "♠") {
+                clearTable = true;
+            }
+        }
+
+        if (clearTable) {
+            this.statusText.setText(`Table cleared by Player ${this.currentPlayer}!`);
+            this.table = [];
+            this.tableTexts.forEach(t => t.destroy());
+            this.tableTexts = [];
+            this.newRoundStarter = this.currentPlayer;
+        }
+
+        this.nextTurn();
+    }
+
+    playerPass() {
+        this.statusText.setText(`Player ${this.currentPlayer} passed`);
+        this.selectedCards = [];
+        this.selectedRank = null;
+
+        if (this.lastPlayerToPlay !== undefined) {
+            this.passesSinceLastPlay = (this.passesSinceLastPlay || 0) + 1;
+
+            if (this.passesSinceLastPlay >= this.hands.length - 1) {
+                this.statusText.setText(`Table cleared after full pass circle by Player ${this.lastPlayerToPlay}!`);
+                this.table = [];
+                this.tableTexts.forEach(t => t.destroy());
+                this.tableTexts = [];
+                this.passesSinceLastPlay = 0;
+                this.newRoundStarter = this.lastPlayerToPlay;
+            }
+        }
+
+        this.nextTurn();
+    }
+
+    nextTurn(){
+        if (this.newRoundStarter !== null) {
+            this.currentPlayer = this.newRoundStarter;
+            this.newRoundStarter = null;
+        } else {
+            let loops = 0;
+            do {
+                this.currentPlayer = (this.currentPlayer + 1) % this.hands.length;
+                loops++;
+                if(this.hands[this.currentPlayer].length === 0 && this.lastPlayerToPlay !== undefined){
+                    this.passesSinceLastPlay++;
+                }
+            } while(this.hands[this.currentPlayer].length === 0 && loops <= this.hands.length);
+        }
+        this.statusText.setText(`Player ${this.currentPlayer}'s turn`);
+        this.renderAllHands();
+    }
+
+    renderTable(){
+        if(this.tableTexts) this.tableTexts.forEach(t=>t.destroy());
+        this.tableTexts = [];
+        const yBase = 500;
+        this.table.forEach((set, idx)=>{
+            set.forEach((card,i)=>{
+                let txt = this.add.text(500 + i*40, yBase - idx*40, this.cardToString(card), { fontSize:"28px", color:"#ff0" });
+                this.tableTexts.push(txt);
+            });
+        });
+    }
+}
+
+const config = {type:Phaser.AUTO, width:1000, height:600, backgroundColor:"#2d2d2d", scene:TycoonScene};
+new Phaser.Game(config);
+</script>
+</body>
+</html>
