@@ -435,7 +435,7 @@ const config = {
     parent: "game-container",
   };
   
-  insertCoin({ gameId: "4gVobSeZ3fy58Vn270PF" }).then(() => {
+  insertCoin({ gameId: "4gVobSeZ3fy58Vn270PF", discord: true }).then(() => {
     new Phaser.Game(config);
   });
   
