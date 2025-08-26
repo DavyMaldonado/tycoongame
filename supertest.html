@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <title>Tycoon Game with Card Images</title>
 <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<script type="module">
+  import { insertCoin, onPlayerJoin, isHost, myPlayer } from "https://unpkg.com/playroomkit/dist/playroomkit.esm.js";</script>
 <style>
 html, body { margin:0; padding:0; width:100%; height:100%; background-color:#111; overflow:hidden; }
 #game-container { width:100%; height:100%; position:relative; overflow:hidden; }
@@ -14,6 +16,7 @@ html, body { margin:0; padding:0; width:100%; height:100%; background-color:#111
 <div id="game-container"></div>
 
 <script>
+const { onPlayerJoin, insertCoin, isHost, myPlayer } = playroomkit;
 const JOKER_RANK = 16;
 const MIN_RANK = 3;
 const MAX_RANK = 15;
@@ -48,6 +51,11 @@ class TycoonScene extends Phaser.Scene {
 
     create() {
         this.add.image(1280/2, 720/2, 'background').setOrigin(0.5,0.5).setDepth(-1).setAlpha(0.6);
+
+
+        // playroom integration
+        onPlayerJoin(player => this.addPlayer(player));
+
         
         // Initialize card frames
         this.initCardFrames();
@@ -432,7 +440,9 @@ const config = {
   parent:"game-container"
 };
 
-const game = new Phaser.Game(config);
+insertCoin({gameId: "4gVobSeZ3fy58Vn270PF"}).then(() => {
+  const game = new Phaser.Game(config);
+});
 
 function resizeGame(){
   const container = document.getElementById("game-container");
